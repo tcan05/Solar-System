@@ -1,0 +1,1418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Earth — Population Globe</title>
+<style>
+  :root {
+    --ink: #e9f4ec;
+    --muted: #64816f;
+    --green: #3ee08a;
+    --green-dim: #146c39;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #000;
+    color: var(--ink);
+    overflow: hidden;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  #webgl, #globe {
+    position: fixed;
+    inset: 0;
+    display: block;
+  }
+  #webgl { z-index: 0; visibility: hidden; }
+  #globe {
+    z-index: 1;
+    cursor: grab;
+    touch-action: none;
+  }
+  #globe.dragging { cursor: grabbing; }
+  body.physical #webgl { visibility: visible; }
+
+  /* CRT-style scanlines + drifting refresh bar (digital mode only) */
+  #scan {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom,
+      rgba(140, 255, 190, 0.028) 0 1px, transparent 1px 3px);
+  }
+  #scan::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 96px;
+    background: linear-gradient(to bottom,
+      transparent, rgba(62, 224, 138, 0.045), transparent);
+    animation: sweep 8s linear infinite;
+  }
+  @keyframes sweep {
+    from { top: -16%; }
+    to   { top: 112%; }
+  }
+  body.physical #scan { display: none; }
+
+  .hud {
+    position: fixed;
+    top: 0;
+    left: 0;
+    padding: clamp(18px, 3.2vw, 38px);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .hud h1 {
+    margin: 0;
+    font-size: clamp(12px, 1.15vw, 14px);
+    font-weight: 600;
+    letter-spacing: 0.5em;
+    color: #dff3e6;
+    text-transform: uppercase;
+  }
+  .hud .sub {
+    margin: 0.7em 0 0;
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .hud .total {
+    margin: 0.9em 0 0;
+    font-size: 12px;
+    color: #8fb79d;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .hud .total strong {
+    color: var(--green);
+    font-weight: 600;
+  }
+
+  .mode {
+    position: fixed;
+    left: clamp(16px, 2.6vw, 30px);
+    bottom: clamp(46px, 6.6vw, 70px);
+    z-index: 10;
+    display: inline-flex;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid rgba(62, 224, 138, 0.28);
+    border-radius: 999px;
+    background: rgba(4, 13, 8, 0.82);
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.6), inset 0 0 22px rgba(62, 224, 138, 0.06);
+    backdrop-filter: blur(8px);
+  }
+  .mode-btn {
+    border: 0;
+    padding: 8px 15px;
+    border-radius: 999px;
+    background: transparent;
+    color: #6f917e;
+    font: 600 10.5px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+  }
+  .mode-btn:hover { color: #cdeeda; }
+  .mode-btn:focus-visible {
+    outline: 1px solid rgba(62, 224, 138, 0.7);
+    outline-offset: 2px;
+  }
+  .mode-btn.active {
+    color: #04160b;
+    background: linear-gradient(180deg, #4df09b, #2bbf70);
+    box-shadow: 0 2px 12px rgba(62, 224, 138, 0.35);
+  }
+  .mode-btn.active:hover { color: #04160b; }
+
+  .hint {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    padding: clamp(16px, 2.6vw, 30px);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: #4e6a59;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity 0.4s ease;
+  }
+  .hint span { color: #6f917e; }
+  .credit {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    padding: clamp(16px, 2.6vw, 30px);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: #3c5245;
+    pointer-events: none;
+    text-align: right;
+    max-width: min(46vw, 560px);
+    z-index: 5;
+  }
+
+  .tooltip {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 20;
+    min-width: 156px;
+    max-width: 260px;
+    padding: 10px 13px 11px;
+    border: 1px solid rgba(62, 224, 138, 0.26);
+    border-radius: 10px;
+    background: rgba(3, 11, 6, 0.9);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .tt-name {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #a9cdb7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tt-pop {
+    margin-top: 3px;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+  }
+  .tt-sub {
+    margin-top: 4px;
+    font-size: 10.5px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  .card {
+    position: fixed;
+    top: clamp(18px, 3.2vw, 38px);
+    right: clamp(18px, 3.2vw, 38px);
+    z-index: 15;
+    width: min(272px, calc(100vw - 36px));
+    padding: 18px 18px 14px;
+    border: 1px solid rgba(62, 224, 138, 0.2);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(5, 16, 9, 0.96), rgba(2, 7, 4, 0.97));
+    box-shadow: 0 28px 70px rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+  }
+  .card-close {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #6f917e;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .card-close:hover { background: rgba(62, 224, 138, 0.12); color: #d8f6e4; }
+  .card-eye {
+    font-size: 9.5px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #5c7d6a;
+  }
+  .card-name {
+    margin: 7px 26px 0 0;
+    font-size: 20px;
+    line-height: 1.15;
+    font-weight: 620;
+    letter-spacing: -0.01em;
+    color: #f1fbf4;
+  }
+  .card-pop {
+    margin-top: 12px;
+    font-size: 27px;
+    font-weight: 640;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: var(--green);
+    font-variant-numeric: tabular-nums;
+  }
+  .card-sub {
+    margin-top: 5px;
+    font-size: 10.5px;
+    color: var(--muted);
+  }
+  .card-stats {
+    margin: 16px 0 0;
+    padding: 0;
+    border-top: 1px solid rgba(62, 224, 138, 0.12);
+  }
+  .card-stats > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(62, 224, 138, 0.07);
+  }
+  .card-stats > div:last-child { border-bottom: 0; padding-bottom: 2px; }
+  .card-stats dt {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #5c7d6a;
+  }
+  .card-stats dd {
+    margin: 0;
+    font-size: 11.5px;
+    color: #cfe6d8;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  [hidden] { display: none !important; }
+
+  @media (max-width: 640px) {
+    .hint { display: none; }
+    .mode { bottom: clamp(16px, 2.6vw, 30px); }
+    .credit { font-size: 9px; bottom: 74px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="webgl" aria-hidden="true"></canvas>
+<canvas id="globe" aria-label="Interactive globe. Hover a country to see its population."></canvas>
+<div id="scan" aria-hidden="true"></div>
+
+<header class="hud">
+  <h1>Earth</h1>
+  <p class="sub">Population by country · <span id="yearLabel">2023</span></p>
+  <p class="total" id="worldLine"></p>
+</header>
+
+<div class="hint">Drag to rotate <span>·</span> Scroll to zoom <span>·</span> Hover a country <span>·</span> Click to pin <span>·</span> <span>R</span> resets <span>·</span> <span>P</span> physical</div>
+<div class="credit" id="credit">Borders: Natural Earth · Population: World Bank 2023</div>
+
+<div class="mode" id="modeSwitch" role="group" aria-label="Globe style">
+  <button type="button" id="btnDigital" class="mode-btn" aria-pressed="true">Digital</button>
+  <button type="button" id="btnPhysical" class="mode-btn" aria-pressed="false">Physical</button>
+</div>
+
+<div id="tooltip" class="tooltip" hidden>
+  <div class="tt-name" id="ttName"></div>
+  <div class="tt-pop" id="ttPop"></div>
+  <div class="tt-sub" id="ttSub"></div>
+</div>
+
+<aside id="card" class="card" hidden>
+  <button id="cardClose" class="card-close" aria-label="Close country details">×</button>
+  <div class="card-eye">Country</div>
+  <h2 class="card-name" id="cardName"></h2>
+  <div class="card-pop" id="cardPop"></div>
+  <div class="card-sub" id="cardSub"></div>
+  <dl class="card-stats">
+    <div><dt>World share</dt><dd id="statShare">—</dd></div>
+    <div><dt>Rank</dt><dd id="statRank">—</dd></div>
+    <div><dt>Region</dt><dd id="statRegion">—</dd></div>
+    <div><dt>Capital</dt><dd id="statCapital">—</dd></div>
+  </dl>
+</aside>
+
+<script>const DATA = /*__GLOBE_DATA__*/;</script>
+<script>const CAPITALS = /*__CAPITALS__*/;</script>
+<script>
+(() => {
+  'use strict';
+
+  const TAU = Math.PI * 2;
+  const D2R = Math.PI / 180;
+  const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+
+  const BORDER = '#126536';
+  const BORDER_HOVER = '#3ee08a';
+  const RIM = 'rgba(24, 126, 64, 0.5)';
+
+  // Equirectangular topography+bathymetry texture (NASA Blue Marble), inlined
+  // as a data URL by tools/build_globe.py. Empty when the texture is absent,
+  // in which case the physical mode falls back to painted colours.
+  const EARTH_IMG_URL = '__EARTH_IMG_URL__';
+  const MODE_KEY = 'earth-globe-mode';
+
+  const nf = new Intl.NumberFormat('en-US');
+
+  // ---------- data ----------
+  const DOT_MAX_PX = 4.2;
+
+  const countries = DATA.countries.map((row, id) => {
+    const [name, iso, pop, continent, polys, labelLon, labelLat, diag] = row;
+    const rings = [];
+    for (const poly of polys) {
+      for (const flat of poly) {
+        const n = flat.length >> 1;
+        const xyz = new Float32Array(n * 3);
+        for (let i = 0, j = 0, k = 0; i < n; i++, j += 2, k += 3) {
+          const lo = flat[j] * D2R;
+          const la = flat[j + 1] * D2R;
+          const cl = Math.cos(la);
+          xyz[k] = cl * Math.cos(lo);
+          xyz[k + 1] = cl * Math.sin(lo);
+          xyz[k + 2] = Math.sin(la);
+        }
+        rings.push(xyz);
+      }
+    }
+    const cl = Math.cos(labelLat * D2R);
+    const labelXyz = [
+      cl * Math.cos(labelLon * D2R),
+      cl * Math.sin(labelLon * D2R),
+      Math.sin(labelLat * D2R)
+    ];
+    return { id, name, iso, pop, continent, rings, labelXyz, diag };
+  });
+
+  const worldPop = DATA.world;
+
+  // Capital cities for the digital mode: [name, lon, lat, population] keyed by
+  // the same ISO code as the countries (population is the city-proper figure
+  // from Wikidata; some territories have no figure). Precomputed world-space
+  // unit vectors for the dots, plus the parallel population lookup.
+  const capXyz = countries.map((c) => {
+    const cap = CAPITALS && CAPITALS[c.iso];
+    if (!cap) return null;
+    const lo = cap[1] * D2R;
+    const la = cap[2] * D2R;
+    const cl = Math.cos(la);
+    return [cl * Math.cos(lo), cl * Math.sin(lo), Math.sin(la)];
+  });
+  const capPop = countries.map((c) => {
+    const cap = CAPITALS && CAPITALS[c.iso];
+    return cap && cap[3] ? cap[3] : 0;
+  });
+
+  // ---------- canvas ----------
+  const canvas = document.getElementById('globe');
+  const ctx = canvas.getContext('2d');
+  const glCanvas = document.getElementById('webgl');
+  const hitCanvas = document.createElement('canvas');
+  const hctx = hitCanvas.getContext('2d', { willReadFrequently: true });
+
+  const tooltip = document.getElementById('tooltip');
+  const ttName = document.getElementById('ttName');
+  const ttPop = document.getElementById('ttPop');
+  const ttSub = document.getElementById('ttSub');
+
+  const card = document.getElementById('card');
+  const cardName = document.getElementById('cardName');
+  const cardPop = document.getElementById('cardPop');
+  const cardSub = document.getElementById('cardSub');
+  const statShare = document.getElementById('statShare');
+  const statRank = document.getElementById('statRank');
+  const statRegion = document.getElementById('statRegion');
+  const statCapital = document.getElementById('statCapital');
+
+  const btnDigital = document.getElementById('btnDigital');
+  const btnPhysical = document.getElementById('btnPhysical');
+
+  let W = 0, H = 0, DPR = 1, cx = 0, cy = 0, baseR = 0, R = 0;
+  let lon = 18, lat = 16, zoom = 1;
+
+  let needs = true;
+  let hovered = -1;
+  let selected = -1;
+  let pointerInside = false;
+  let hitReady = false;
+  let dragging = false;
+  let moved = 0;
+  let lastX = 0, lastY = 0, mouseX = -1, mouseY = -1;
+  let vlon = 0, vlat = 0;
+  let lastInteract = 0;
+  let tween = null;
+  let lastFrame = 0;
+
+  let mode = 'digital';
+
+  let cap = 0, SX = null, SY = null, VZ = null;
+  function ensureScratch(n) {
+    if (n > cap) {
+      cap = Math.max(n, 1024);
+      SX = new Float32Array(cap);
+      SY = new Float32Array(cap);
+      VZ = new Float32Array(cap);
+    }
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    hitCanvas.width = Math.round(W);
+    hitCanvas.height = Math.round(H);
+    hctx.setTransform(1, 0, 0, 1, 0, 0);
+    cx = W / 2;
+    cy = H / 2;
+    baseR = Math.min(W, H) * 0.405;
+    if (H < 560) baseR = Math.min(W, H) * 0.43;
+    needs = true;
+    hitReady = false;
+  }
+
+  // ---------- projection ----------
+  function horizon(a, b, radius) {
+    const za = VZ[a], zb = VZ[b];
+    const t = za / (za - zb);
+    let x = SX[a] + (SX[b] - SX[a]) * t - cx;
+    let y = SY[a] + (SY[b] - SY[a]) * t - cy;
+    const d = Math.hypot(x, y) || 1;
+    return [cx + (x / d) * radius, cy + (y / d) * radius];
+  }
+
+  function addRing(path, xyz, cosP, sinP, cosL, sinL, radius) {
+    const n = xyz.length / 3;
+    if (n < 3) return false;
+    ensureScratch(n);
+
+    let allVisible = true;
+    for (let i = 0, k = 0; i < n; i++, k += 3) {
+      const X = xyz[k], Y = xyz[k + 1], Z = xyz[k + 2];
+      const wx = -sinL * X + cosL * Y;
+      const t = cosL * X + sinL * Y;
+      const wy = cosP * Z - sinP * t;
+      const wz = sinP * Z + cosP * t;
+      SX[i] = cx + radius * wx;
+      SY[i] = cy - radius * wy;
+      VZ[i] = wz;
+      if (wz <= 0) allVisible = false;
+    }
+
+    if (allVisible) {
+      path.moveTo(SX[0], SY[0]);
+      for (let i = 1; i < n; i++) path.lineTo(SX[i], SY[i]);
+      path.closePath();
+      return true;
+    }
+
+    let any = false;
+    // True while the pen actually sits on a point drawn by THIS ring. A ring
+    // whose vertices lie behind the horizon still gets exit-bridge calls at
+    // i == 0 (prev = n - 1 visible, current vertex not), and without this flag
+    // that lineTo would start from the previous ring's endpoint, drawing a long
+    // ghost chord across the globe.
+    let penOnRing = false;
+    let prev = n - 1;
+    for (let i = 0; i < n; i++) {
+      const curVis = VZ[i] > 0;
+      const prevVis = VZ[prev] > 0;
+      if (curVis) {
+        if (!prevVis) {
+          const h = horizon(prev, i, radius);
+          path.moveTo(h[0], h[1]);
+          path.lineTo(SX[i], SY[i]);
+          penOnRing = true;
+        } else if (!penOnRing) {
+          path.moveTo(SX[prev], SY[prev]);
+          path.lineTo(SX[i], SY[i]);
+          penOnRing = true;
+        } else {
+          path.lineTo(SX[i], SY[i]);
+        }
+        any = true;
+      } else if (penOnRing) {
+        const h = horizon(prev, i, radius);
+        path.lineTo(h[0], h[1]);
+        penOnRing = false;
+        any = true;
+      }
+      prev = i;
+    }
+    return any;
+  }
+
+  // ---------- graticule (digital mode) ----------
+  function sphereRing(latDeg, lonFixed, isLat) {
+    const n = 128;
+    const xyz = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      let X, Y, Z;
+      if (isLat) { // parallel at a fixed latitude
+        const t = (i / n) * TAU;
+        X = Math.cos(latDeg * D2R) * Math.cos(t);
+        Y = Math.cos(latDeg * D2R) * Math.sin(t);
+        Z = Math.sin(latDeg * D2R);
+      } else { // meridian at a fixed longitude
+        const t = -Math.PI / 2 + (i / (n - 1)) * Math.PI;
+        X = Math.cos(t) * Math.cos(lonFixed * D2R);
+        Y = Math.cos(t) * Math.sin(lonFixed * D2R);
+        Z = Math.sin(t);
+      }
+      xyz[i * 3] = X;
+      xyz[i * 3 + 1] = Y;
+      xyz[i * 3 + 2] = Z;
+    }
+    return xyz;
+  }
+  const GRAT_PAR = [-60, -30, 0, 30, 60].map((la) => sphereRing(la, 0, true));
+  const GRAT_MER = [];
+  for (let lo = 0; lo < 360; lo += 30) GRAT_MER.push(sphereRing(0, lo, false));
+  const GRAT_EQ = GRAT_PAR[2];
+
+  function drawGraticule(cosP, sinP, cosL, sinL) {
+    const g = new Path2D();
+    for (const r of GRAT_PAR) addRing(g, r, cosP, sinP, cosL, sinL, R);
+    ctx.strokeStyle = 'rgba(62, 224, 138, 0.09)';
+    ctx.lineWidth = 1;
+    ctx.stroke(g);
+    const eq = new Path2D();
+    addRing(eq, GRAT_EQ, cosP, sinP, cosL, sinL, R);
+    ctx.strokeStyle = 'rgba(62, 224, 138, 0.17)';
+    ctx.stroke(eq);
+    const m = new Path2D();
+    for (const r of GRAT_MER) addRing(m, r, cosP, sinP, cosL, sinL, R);
+    ctx.strokeStyle = 'rgba(62, 224, 138, 0.07)';
+    ctx.stroke(m);
+  }
+
+  // ---------- WebGL (physical mode) ----------
+  let glState = null;
+
+  function glShader(gl, type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const err = gl.getShaderInfoLog(s);
+      gl.deleteShader(s);
+      throw new Error(err || 'shader compile failed');
+    }
+    return s;
+  }
+
+  function buildGLProgram(gl, useGrad) {
+    // useGrad: sample via texture2DGradEXT with analytic, branch-cut-safe derivatives.
+    // Without it, mip-level selection explodes across the antimeridian (raw |du| ~ 1
+    // between adjacent pixels), and those fragments show the whole-texture average
+    // color as 2px dashes along longitude 180.
+    // NOTE: the sampling variants below are FLAT arrays merged with concat().
+    // Nesting the ternary array inside the outer literal would make join('\n')
+    // stringify it with commas, collapsing all newlines between the grad lines
+    // and producing a ',' syntax error at compile time (the program then
+    // silently fell back to the plain sampler and the seam dashes stayed
+    // visible on GPUs that reject the extension).
+    const extLine = useGrad ? '#extension GL_EXT_shader_texture_lod : enable\n' : '';
+    const sampling = useGrad ? [
+      '  vec2 px = lonlat(gl_FragCoord.xy + vec2(1.0, 0.0));',
+      '  vec2 mx = lonlat(gl_FragCoord.xy - vec2(1.0, 0.0));',
+      '  vec2 py = lonlat(gl_FragCoord.xy + vec2(0.0, 1.0));',
+      '  vec2 my = lonlat(gl_FragCoord.xy - vec2(0.0, 1.0));',
+      '  vec2 dPx = vec2(wrapLon(px.x - mx.x) * 0.5 * 0.15915494, (px.y - mx.y) * 0.5 * 0.31830989);',
+      '  vec2 dPy = vec2(wrapLon(py.x - my.x) * 0.5 * 0.15915494, (py.y - my.y) * 0.5 * 0.31830989);',
+      '  base = texture2DGradEXT(uTex, uv, dPx, dPy).rgb;'
+    ] : [
+      '  base = texture2D(uTex, uv).rgb;'
+    ];
+    const fsSrc = (prec) => extLine + [
+      'precision ' + prec + ' float;',
+      'uniform sampler2D uTex;',
+      'uniform vec2 uC;',
+      'uniform float uR;',
+      'uniform vec3 uR0;',
+      'uniform vec3 uR1;',
+      'uniform vec3 uR2;',
+      'vec2 lonlat(vec2 f) {',
+      '  vec2 qq = (f - uC) / uR;',
+      '  float nzz = sqrt(max(0.0, 1.0 - dot(qq, qq)));',
+      '  vec3 ww = qq.x * uR0 + qq.y * uR1 + nzz * uR2;',
+      '  return vec2(atan(ww.y, ww.x), asin(clamp(ww.z, -1.0, 1.0)));',
+      '}',
+      'float wrapLon(float d) {',
+      '  d = mod(d, 6.283185307179586);',
+      '  if (d > 3.141592653589793) { d -= 6.283185307179586; }',
+      '  return d;',
+      '}',
+      'void main() {',
+      '  vec2 q = (gl_FragCoord.xy - uC) / uR;',
+      '  float s2 = dot(q, q);',
+      '  if (s2 > 1.0) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }',
+      '  float nz = sqrt(max(0.0, 1.0 - s2));',
+      '  vec3 nv = vec3(q, nz);',
+      '  float nd = dot(nv, normalize(vec3(-0.38, 0.50, 0.80)));',
+      '  float day = smoothstep(-0.22, 0.40, nd);',
+      '  vec3 w = nv.x * uR0 + nv.y * uR1 + nv.z * uR2;',
+      '  float lat = asin(clamp(w.z, -1.0, 1.0));',
+      '  float lon = atan(w.y, w.x);',
+      '  vec2 uv = vec2(lon * 0.15915494 + 0.5, lat * 0.31830989 + 0.5);',
+      '  uv = clamp(uv, vec2(0.0, 0.002), vec2(1.0, 0.998));',
+      '  vec3 base;'
+    ].concat(sampling, [
+      '  vec3 col = base * (0.46 + 0.60 * day);',
+      '  col += vec3(0.045, 0.08, 0.16) * (1.0 - day);',
+      '  float limb = pow(1.0 - nz, 3.0);',
+      '  col += vec3(0.30, 0.58, 0.85) * limb * 0.5;',
+      '  gl_FragColor = vec4(col, 1.0);',
+      '}'
+    ]).join('\n');
+    const vsS = glShader(gl, gl.VERTEX_SHADER, 'attribute vec2 aP; void main() { gl_Position = vec4(aP, 0.0, 1.0); }');
+    let pr = null;
+    try {
+      const fs = glShader(gl, gl.FRAGMENT_SHADER, fsSrc('highp'));
+      pr = gl.createProgram();
+      gl.attachShader(pr, vsS);
+      gl.attachShader(pr, fs);
+      gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(pr) || 'link failed');
+      }
+    } catch (err) {
+      // Retry with mediump precision for GPUs without highp fragment support.
+      const fs = glShader(gl, gl.FRAGMENT_SHADER, fsSrc('mediump'));
+      pr = gl.createProgram();
+      gl.attachShader(pr, vsS);
+      gl.attachShader(pr, fs);
+      gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) {
+        throw new Error(gl.getProgramInfoLog(pr) || 'link failed');
+      }
+    }
+    return pr;
+  }
+
+  function ensureGL() {
+    if (glState) return glState;
+    glState = {};                       // no further attempts unless context is restored
+    if (!EARTH_IMG_URL) return glState; // no texture shipped: painted fallback
+    let gl = null;
+    try {
+      gl = glCanvas.getContext('webgl', { antialias: true });
+    } catch (_) {}
+    if (!gl) return glState;
+
+    try {
+      // EXT_shader_texture_lod lets the shader supply branch-cut-safe texture
+      // derivatives; without it the antimeridian seam shows mipmap artifacts.
+      const lodExt = gl.getExtension('EXT_shader_texture_lod');
+      let prog = null;
+      try {
+        prog = buildGLProgram(gl, !!lodExt);
+      } catch (err) {
+        prog = null;
+        console.warn('globe: grad shader failed, falling back to plain sampling', err);
+      }
+      if (!prog && lodExt) {
+        try { prog = buildGLProgram(gl, false); } catch (_) { prog = null; }
+      }
+      if (!prog) { console.warn('globe: no WebGL program usable'); return glState; }
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const aP = gl.getAttribLocation(prog, 'aP');
+      gl.enableVertexAttribArray(aP);
+      gl.vertexAttribPointer(aP, 2, gl.FLOAT, false, 0, 0);
+
+      glState.gl = gl;
+      glState.prog = prog;
+      glState.uni = {
+        uTex: gl.getUniformLocation(prog, 'uTex'),
+        uC: gl.getUniformLocation(prog, 'uC'),
+        uR: gl.getUniformLocation(prog, 'uR'),
+        uR0: gl.getUniformLocation(prog, 'uR0'),
+        uR1: gl.getUniformLocation(prog, 'uR1'),
+        uR2: gl.getUniformLocation(prog, 'uR2')
+      };
+      glState.tex = gl.createTexture();
+      glState.w = 0;
+      glState.h = 0;
+      glState.ok = true;
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          gl.bindTexture(gl.TEXTURE_2D, glState.tex);
+          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.generateMipmap(gl.TEXTURE_2D);
+          const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
+          if (aniso) {
+            const max = gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT);
+            gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(4, max));
+          }
+          glState.ready = true;
+          needs = true;
+        } catch (_) {
+          glState.ok = false; // painted fallback
+        }
+      };
+      img.onerror = () => { glState.ok = false; };
+      img.src = EARTH_IMG_URL;
+    } catch (_) {
+      glState.ok = false;
+    }
+    return glState;
+  }
+
+  function glDraw(sinP, cosP, sinL, cosL) {
+    const s = glState;
+    if (!s.ok || !s.ready) return;
+    const gl = s.gl;
+    const w = Math.round(W * DPR);
+    const h = Math.round(H * DPR);
+    if (s.w !== w || s.h !== h) {
+      glCanvas.width = w;
+      glCanvas.height = h;
+      s.w = w;
+      s.h = h;
+      gl.viewport(0, 0, w, h);
+    }
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(s.prog);
+    gl.uniform2f(s.uni.uC, cx * DPR, h - cy * DPR);
+    gl.uniform1f(s.uni.uR, R * DPR);
+    gl.uniform3f(s.uni.uR0, -sinL, cosL, 0);
+    gl.uniform3f(s.uni.uR1, -sinP * cosL, -sinP * sinL, cosP);
+    gl.uniform3f(s.uni.uR2, cosP * cosL, cosP * sinL, sinP);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, s.tex);
+    gl.uniform1i(s.uni.uTex, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  glCanvas.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault();
+    if (glState) glState.ready = false;
+  });
+  glCanvas.addEventListener('webglcontextrestored', () => {
+    glState = null;
+    if (mode === 'physical') ensureGL();
+    needs = true;
+  });
+
+  // Painted physical fallback used when WebGL or the texture is unavailable.
+  function paintPhysicalFallback() {
+    const ocean = ctx.createRadialGradient(cx - R * 0.3, cy + R * 0.35, R * 0.1, cx, cy, R);
+    ocean.addColorStop(0, '#2a5d94');
+    ocean.addColorStop(0.65, '#1b3f6b');
+    ocean.addColorStop(1, '#0b2444');
+    ctx.fillStyle = ocean;
+    ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+  }
+
+  // ---------- drawing ----------
+  function draw() {
+    R = baseR * zoom;
+    const cosP = Math.cos(lat * D2R), sinP = Math.sin(lat * D2R);
+    const cosL = Math.cos(lon * D2R), sinL = Math.sin(lon * D2R);
+    const phys = mode === 'physical';
+
+    ctx.clearRect(0, 0, W, H);
+
+    if (phys) {
+      // soft blue atmosphere behind the disc
+      const halo = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.8);
+      halo.addColorStop(0, 'rgba(88, 158, 235, 0.32)');
+      halo.addColorStop(0.4, 'rgba(40, 90, 170, 0.10)');
+      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * 1.8, 0, TAU);
+      ctx.fill();
+
+      const s = ensureGL();
+      if (s.ok && s.ready) {
+        glDraw(sinP, cosP, sinL, cosL);
+      } else {
+        // WebGL or texture unavailable/late: flat placeholder ocean disc
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, TAU);
+        ctx.fillStyle = '#16324f';
+        ctx.fill();
+      }
+    } else {
+      const halo = ctx.createRadialGradient(cx, cy, R * 0.92, cx, cy, R * 1.75);
+      halo.addColorStop(0, 'rgba(18, 104, 54, 0.20)');
+      halo.addColorStop(0.45, 'rgba(10, 60, 30, 0.08)');
+      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R * 1.75, 0, TAU);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, 0, TAU);
+      ctx.fillStyle = '#000';
+      ctx.fill();
+    }
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    ctx.clip();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    if (!phys) drawGraticule(cosP, sinP, cosL, sinL);
+    else if (!(glState && glState.ok && glState.ready)) paintPhysicalFallback();
+
+    const useHit = pointerInside;
+    const globalPath = useHit ? null : new Path2D();
+    const paths = useHit ? new Array(countries.length) : null;
+
+    for (let k = 0; k < countries.length; k++) {
+      const c = countries[k];
+      const path = useHit ? new Path2D() : globalPath;
+      let any = false;
+      for (let r = 0; r < c.rings.length; r++) {
+        if (addRing(path, c.rings[r], cosP, sinP, cosL, sinL, R)) any = true;
+      }
+      if (useHit && any) paths[k] = path;
+    }
+
+    // Painted land for the physical fallback (no WebGL / no texture).
+    if (phys && !(glState && glState.ok && glState.ready)) {
+      ctx.fillStyle = '#c2bb9f';
+      if (useHit) {
+        for (let k = 0; k < paths.length; k++) {
+          if (paths[k]) ctx.fill(paths[k], 'evenodd');
+        }
+      } else {
+        ctx.fill(globalPath, 'evenodd');
+      }
+    }
+
+    ctx.strokeStyle = phys ? 'rgba(10, 26, 14, 0.55)' : BORDER;
+    ctx.lineWidth = phys ? 0.8 : 1;
+
+    // countries too small to see get a marker dot at their label point
+    const dotIds = [];
+    const dotXs = [];
+    const dotYs = [];
+    const dotRadius = 1.55 + 0.1 * zoom;
+    for (let k = 0; k < countries.length; k++) {
+      const c = countries[k];
+      if (c.diag * R * D2R >= DOT_MAX_PX) continue;
+      const X = c.labelXyz[0], Y = c.labelXyz[1], Z = c.labelXyz[2];
+      const wx = -sinL * X + cosL * Y;
+      const t = cosL * X + sinL * Y;
+      const wy = cosP * Z - sinP * t;
+      const wz = sinP * Z + cosP * t;
+      if (wz <= 0.02) continue;
+      dotIds.push(k);
+      dotXs.push(cx + R * wx);
+      dotYs.push(cy - R * wy);
+    }
+
+    if (useHit) {
+      hctx.clearRect(0, 0, W, H);
+      for (let k = 0; k < paths.length; k++) {
+        const p = paths[k];
+        if (!p) continue;
+        hctx.fillStyle = hitColor(k);
+        hctx.fill(p, 'evenodd');
+      }
+      for (let i = 0; i < dotIds.length; i++) {
+        hctx.beginPath();
+        hctx.arc(dotXs[i], dotYs[i], 5, 0, TAU);
+        hctx.fillStyle = hitColor(dotIds[i]);
+        hctx.fill();
+      }
+      hitReady = true;
+
+      for (let k = 0; k < paths.length; k++) {
+        if (paths[k]) ctx.stroke(paths[k]);
+      }
+
+      if (selected >= 0 && paths[selected]) {
+        ctx.fillStyle = phys ? 'rgba(255, 255, 255, 0.10)' : 'rgba(62, 224, 138, 0.08)';
+        ctx.fill(paths[selected], 'evenodd');
+        ctx.strokeStyle = phys ? 'rgba(240, 255, 244, 0.9)' : 'rgba(62, 224, 138, 0.85)';
+        ctx.lineWidth = phys ? 1.2 : 1.4;
+        ctx.stroke(paths[selected]);
+      }
+      if (hovered >= 0 && hovered !== selected && paths[hovered]) {
+        ctx.fillStyle = phys ? 'rgba(255, 255, 255, 0.14)' : 'rgba(62, 224, 138, 0.13)';
+        ctx.fill(paths[hovered], 'evenodd');
+        ctx.strokeStyle = phys ? '#ffffff' : BORDER_HOVER;
+        ctx.lineWidth = phys ? 1 : 1.35;
+        ctx.stroke(paths[hovered]);
+      }
+    } else {
+      ctx.stroke(globalPath);
+      hitReady = false;
+    }
+
+    // marker dots
+    for (let i = 0; i < dotIds.length; i++) {
+      const id = dotIds[i];
+      const active = id === hovered || id === selected;
+      ctx.beginPath();
+      ctx.arc(dotXs[i], dotYs[i], active ? dotRadius + 1.1 : dotRadius, 0, TAU);
+      ctx.fillStyle = active ? (phys ? '#ffffff' : '#8bf5bd') : (phys ? 'rgba(8, 30, 16, 0.85)' : '#2f9c5c');
+      ctx.fill();
+      if (active) {
+        ctx.beginPath();
+        ctx.arc(dotXs[i], dotYs[i], dotRadius + 4.5, 0, TAU);
+        ctx.strokeStyle = phys ? 'rgba(255, 255, 255, 0.45)' : 'rgba(62, 224, 138, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
+    if (!phys) {
+      // capital-city dots: small amber dot with a soft halo, digital mode only.
+      // The pinned country's capital gets accent rings and a name + population
+      // label so the figure is visible right on the map.
+      const capR = 1.8 + 0.15 * zoom;
+      for (let k = 0; k < countries.length; k++) {
+        const v = capXyz[k];
+        if (!v) continue;
+        const X = v[0], Y = v[1], Z = v[2];
+        const wx = -sinL * X + cosL * Y;
+        const wt = cosL * X + sinL * Y;
+        const wy = cosP * Z - sinP * wt;
+        const wz = sinP * Z + cosP * wt;
+        if (wz <= 0.02) continue;
+        const px = cx + R * wx;
+        const py = cy - R * wy;
+        const pinned = k === selected;
+        ctx.beginPath();
+        ctx.arc(px, py, capR + 2.2, 0, TAU);
+        ctx.fillStyle = 'rgba(255, 196, 77, 0.16)';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(px, py, capR, 0, TAU);
+        ctx.fillStyle = pinned ? '#ffd98d' : '#ffc44d';
+        ctx.fill();
+        ctx.lineWidth = 0.7;
+        ctx.strokeStyle = 'rgba(20, 40, 10, 0.55)';
+        ctx.stroke();
+        if (pinned) {
+          ctx.beginPath();
+          ctx.arc(px, py, capR + 4.6, 0, TAU);
+          ctx.strokeStyle = 'rgba(255, 196, 77, 0.9)';
+          ctx.lineWidth = 1.3;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(px, py, capR + 7.6, 0, TAU);
+          ctx.strokeStyle = 'rgba(255, 196, 77, 0.32)';
+          ctx.lineWidth = 0.9;
+          ctx.stroke();
+          const capData = CAPITALS[countries[k].iso];
+          let label = capData ? capData[0] : '';
+          if (capPop[k]) label += ' — ' + shortPop(capPop[k]);
+          if (label) {
+            const lx = px + capR + 9;
+            const side = px > W - 150 ? -1 : 1;
+            ctx.save();
+            ctx.font = '10px system-ui, sans-serif';
+            ctx.textAlign = side > 0 ? 'left' : 'right';
+            ctx.shadowColor = 'rgba(2, 10, 4, 0.9)';
+            ctx.shadowBlur = 3;
+            ctx.fillStyle = 'rgba(255, 224, 160, 0.96)';
+            ctx.fillText(label, side > 0 ? lx : px - capR - 9, py + 3.5);
+            ctx.restore();
+          }
+        }
+      }
+    }
+
+    if (!phys) {
+      // inner vignette: edges fall into shadow like an old CRT tube
+      const vig = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, R);
+      vig.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      vig.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
+      ctx.fillStyle = vig;
+      ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+    }
+
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, TAU);
+    if (phys) {
+      ctx.strokeStyle = 'rgba(4, 10, 6, 0.5)';
+      ctx.lineWidth = 1;
+    } else {
+      const rimGrad = ctx.createLinearGradient(cx - R, cy - R, cx + R, cy + R);
+      rimGrad.addColorStop(0, 'rgba(80, 255, 160, 0.75)');
+      rimGrad.addColorStop(0.55, 'rgba(24, 126, 64, 0.5)');
+      rimGrad.addColorStop(1, 'rgba(10, 50, 26, 0.35)');
+      ctx.strokeStyle = rimGrad;
+      ctx.lineWidth = 1.6;
+    }
+    ctx.stroke();
+
+    if (useHit) syncHover();
+  }
+
+  // ---------- picking ----------
+  // Hit colors are grid-aligned in all three channels so that pixels blended
+  // between two neighbouring countries (antialiased borders) fail to decode.
+  function hitColor(k) {
+    const c = k + 1;
+    return 'rgb(' + ((c & 15) << 4) + ',' + (((c >> 4) & 15) << 4) + ',' + ((c >> 8) << 4) + ')';
+  }
+
+  function pick(x, y) {
+    if (!hitReady) return -1;
+    const ix = x | 0;
+    const iy = y | 0;
+    if (ix < 0 || iy < 0 || ix >= hitCanvas.width || iy >= hitCanvas.height) return -1;
+    const d = hctx.getImageData(ix, iy, 1, 1).data;
+    if (d[3] < 250) return -1;
+    if ((d[0] & 15) > 2 || (d[1] & 15) > 2 || (d[2] & 15) > 2) return -1;
+    const code = (d[0] >> 4) | ((d[1] >> 4) << 4) | ((d[2] >> 4) << 8);
+    const id = code - 1;
+    return id >= 0 && id < countries.length ? id : -1;
+  }
+
+  // ---------- text helpers ----------
+  function shortPop(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, '') + ' billion';
+    if (n >= 1e6) return (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + ' million';
+    if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, '') + ' thousand';
+    return nf.format(n);
+  }
+
+  function shareText(n) {
+    const s = (n / worldPop) * 100;
+    if (s < 0.01) return 'less than 0.01% of the world';
+    const digits = s >= 10 ? 0 : s >= 1 ? 1 : 2;
+    return s.toFixed(digits) + '% of the world';
+  }
+
+  // Antarctica has no permanent residents; show that consistently instead of
+  // the transient-researcher estimate.
+  function isAta(c) { return c.iso === 'ATA'; }
+
+  function subtitle(c) {
+    if (isAta(c)) return 'No permanent residents';
+    return shortPop(c.pop) + ' · ' + shareText(c.pop);
+  }
+
+  // ---------- hover ----------
+  function moveTooltip(x, y) {
+    const tw = tooltip.offsetWidth;
+    const th = tooltip.offsetHeight;
+    let tx = x + 18;
+    let ty = y + 18;
+    if (tx + tw > W - 12) tx = x - tw - 18;
+    if (ty + th > H - 12) ty = y - th - 18;
+    tx = clamp(tx, 10, Math.max(10, W - tw - 10));
+    ty = clamp(ty, 10, Math.max(10, H - th - 10));
+    tooltip.style.transform = 'translate(' + Math.round(tx) + 'px,' + Math.round(ty) + 'px)';
+  }
+
+  function refreshTooltip() {
+    if (hovered < 0 || hovered === selected) {
+      tooltip.hidden = true;
+      return;
+    }
+    const c = countries[hovered];
+    ttName.textContent = c.name;
+    ttPop.textContent = isAta(c) ? '—' : nf.format(c.pop);
+    ttSub.textContent = subtitle(c);
+    tooltip.hidden = false;
+    moveTooltip(mouseX, mouseY);
+  }
+
+  function applyHover(id) {
+    if (id === hovered) return;
+    hovered = id;
+    needs = true;
+    refreshTooltip();
+  }
+
+  function syncHover() {
+    if (!pointerInside || dragging) {
+      applyHover(-1);
+      return;
+    }
+    applyHover(pick(mouseX, mouseY));
+    if (hovered >= 0) moveTooltip(mouseX, mouseY);
+  }
+
+  // ---------- selection ----------
+  function showCard(c) {
+    cardName.textContent = c.name;
+    if (isAta(c)) {
+      cardPop.textContent = '—';
+      cardSub.textContent = 'No permanent residents';
+      statShare.textContent = '—';
+      statRank.textContent = '#1 · least populated';
+    } else {
+      cardPop.textContent = nf.format(c.pop);
+      cardSub.textContent = shortPop(c.pop) + ' people';
+      statShare.textContent = shareText(c.pop).replace(' of the world', '');
+      statRank.textContent = '#' + (c.id + 1) + ' of ' + (countries.length - 1);
+    }
+    statRegion.textContent = c.continent || '—';
+    // capital line: name + city-proper population (digital capital dataset)
+    if (capPop[c.id]) {
+      statCapital.textContent = CAPITALS[c.iso][0] + ' — ' + shortPop(capPop[c.id]);
+    } else {
+      statCapital.textContent = '—';
+    }
+    card.hidden = false;
+  }
+
+  function select(id) {
+    selected = id;
+    if (id >= 0) showCard(countries[id]);
+    else card.hidden = true;
+    refreshTooltip();
+    needs = true;
+  }
+
+  // ---------- mode ----------
+  function applyModeUI() {
+    const phys = mode === 'physical';
+    document.body.classList.toggle('physical', phys);
+    btnDigital.classList.toggle('active', !phys);
+    btnPhysical.classList.toggle('active', phys);
+    btnDigital.setAttribute('aria-pressed', String(!phys));
+    btnPhysical.setAttribute('aria-pressed', String(phys));
+  }
+
+  function setMode(m) {
+    if (mode === m) return;
+    mode = m;
+    applyModeUI();
+    if (m === 'physical') ensureGL();
+    try { localStorage.setItem(MODE_KEY, m); } catch (_) {}
+    needs = true;
+  }
+
+  btnDigital.addEventListener('click', () => setMode('digital'));
+  btnPhysical.addEventListener('click', () => setMode('physical'));
+
+  // ---------- animation ----------
+  function frame(now) {
+    const dt = lastFrame ? Math.min(70, now - lastFrame) : 16;
+    lastFrame = now;
+
+    if (tween) {
+      const p = Math.min(1, (now - tween.t0) / tween.dur);
+      const e = 1 - Math.pow(1 - p, 3);
+      lon = tween.lon0 + tween.dLon * e;
+      lat = tween.lat0 + tween.dLat * e;
+      zoom = tween.z0 + tween.dZ * e;
+      needs = true;
+      if (p >= 1) tween = null;
+    } else if (!dragging) {
+      if (Math.abs(vlon) > 0.004 || Math.abs(vlat) > 0.004) {
+        lon += vlon;
+        lat = clamp(lat + vlat, -85, 85);
+        const damp = Math.pow(0.93, dt / 16.67);
+        vlon *= damp;
+        vlat *= damp;
+        lastInteract = now;
+        needs = true;
+      } else if (hovered < 0 && zoom <= 1.01 && now - lastInteract > 1400) {
+        lon += 2.2 * (dt / 1000);
+        needs = true;
+      }
+    }
+
+    if (needs) {
+      needs = false;
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetView() {
+    let d = 18 - lon;
+    d = (((d + 180) % 360) + 360) % 360 - 180;
+    tween = {
+      t0: performance.now(),
+      dur: 700,
+      lon0: lon,
+      dLon: d,
+      lat0: lat,
+      dLat: 15 - lat,
+      z0: zoom,
+      dZ: 1 - zoom
+    };
+    vlon = vlat = 0;
+    lastInteract = performance.now();
+  }
+
+  function cancelDrag() {
+    if (!dragging) return;
+    dragging = false;
+    canvas.classList.remove('dragging');
+    vlon = vlat = 0;
+  }
+
+  // ---------- input ----------
+  canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    dragging = true;
+    moved = 0;
+    pointerInside = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    vlon = vlat = 0;
+    tween = null;
+    canvas.classList.add('dragging');
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    tooltip.hidden = true;
+    hovered = -1;
+    needs = true;
+    lastInteract = performance.now();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    if (!pointerInside) {
+      pointerInside = true;
+      needs = true;
+    }
+    if (dragging) {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      const speed = 0.3 / Math.pow(zoom, 0.85);
+      lon -= dx * speed;
+      lat = clamp(lat + dy * speed, -85, 85);
+      vlon = -dx * speed * 0.45;
+      vlat = dy * speed * 0.45;
+      lastInteract = performance.now();
+      needs = true;
+      return;
+    }
+    const id = pick(e.clientX, e.clientY);
+    applyHover(id);
+    if (id >= 0) moveTooltip(e.clientX, e.clientY);
+    else lastInteract = performance.now();
+  });
+
+  function endDrag(e) {
+    if (!dragging) return;
+    dragging = false;
+    canvas.classList.remove('dragging');
+    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    lastInteract = performance.now();
+    if (moved < 6) {
+      const id = pick(e.clientX, e.clientY);
+      applyHover(id);
+      select(id);
+      vlon = vlat = 0;
+    }
+    needs = true;
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('pointerleave', () => {
+    if (dragging) return;
+    pointerInside = false;
+    applyHover(-1);
+    needs = true;
+  });
+  canvas.addEventListener('pointerenter', () => {
+    pointerInside = true;
+    needs = true;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const f = Math.exp(-e.deltaY * 0.0013);
+    zoom = clamp(zoom * f, 1, 4);
+    lastInteract = performance.now();
+    needs = true;
+  }, { passive: false });
+
+  canvas.addEventListener('dblclick', () => resetView());
+
+  // Cancel an in-progress drag if the window loses focus, so the globe doesn't
+  // stay stuck in "grabbing" state.
+  window.addEventListener('blur', () => {
+    cancelDrag();
+    pointerInside = false;
+    applyHover(-1);
+    needs = true;
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Escape') select(-1);
+    else if (e.key === 'r' || e.key === 'R') resetView();
+    else if (e.key === 'p' || e.key === 'P') setMode(mode === 'digital' ? 'physical' : 'digital');
+  });
+
+  document.getElementById('cardClose').addEventListener('click', () => select(-1));
+
+  window.addEventListener('resize', resize);
+
+  // ---------- boot ----------
+  document.getElementById('yearLabel').textContent = DATA.year;
+  document.getElementById('worldLine').innerHTML =
+    'World population <strong>' + shortPop(worldPop) + '</strong>';
+  if (EARTH_IMG_URL) {
+    document.getElementById('credit').textContent += ' · Texture: NASA Blue Marble';
+  }
+
+  // debug/testing hook (harmless in production)
+  window.__globe = {
+    get view() { return { lon, lat, zoom, mode, hovered, selected }; },
+    setView(la, lo, z) { lat = la; lon = lo; zoom = z; vlon = vlat = 0; tween = null; lastInteract = performance.now() + 36e5; needs = true; },
+    setMode
+  };
+
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (saved === 'physical' || saved === 'digital') mode = saved;
+  } catch (_) {}
+  // A ?mode= query parameter overrides both the default and the remembered
+  // choice. Used by the Solar System project, which opens Earth in physical
+  // mode (earth-globe/index.html?mode=physical).
+  try {
+    const q = new URLSearchParams(location.search).get('mode');
+    if (q === 'physical') mode = 'physical';
+    else if (q === 'digital') mode = 'digital';
+  } catch (_) {}
+  applyModeUI();
+  if (mode === 'physical') ensureGL();
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
