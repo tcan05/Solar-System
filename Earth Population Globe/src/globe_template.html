@@ -10,7 +10,6 @@
     --ink: #e9f4ec;
     --muted: #64816f;
     --green: #3ee08a;
-    --green-dim: #146c39;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -351,7 +350,6 @@
 
   const BORDER = '#126536';
   const BORDER_HOVER = '#3ee08a';
-  const RIM = 'rgba(24, 126, 64, 0.5)';
 
   // Equirectangular topography+bathymetry texture (NASA Blue Marble), inlined
   // as a data URL by tools/build_globe.py. Empty when the texture is absent,
@@ -769,9 +767,10 @@
           needs = true;
         } catch (_) {
           glState.ok = false; // painted fallback
+          needs = true;
         }
       };
-      img.onerror = () => { glState.ok = false; };
+      img.onerror = () => { glState.ok = false; needs = true; };
       img.src = EARTH_IMG_URL;
     } catch (_) {
       glState.ok = false;
@@ -828,6 +827,7 @@
 
   // ---------- drawing ----------
   function draw() {
+    if (W <= 0 || H <= 0) return;
     R = baseR * zoom;
     const cosP = Math.cos(lat * D2R), sinP = Math.sin(lat * D2R);
     const cosL = Math.cos(lon * D2R), sinL = Math.sin(lon * D2R);
@@ -835,6 +835,8 @@
 
     ctx.clearRect(0, 0, W, H);
 
+    // physical mode: is the textured WebGL globe available this frame?
+    let glReady = false;
     if (phys) {
       // soft blue atmosphere behind the disc
       const halo = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.8);
@@ -847,7 +849,8 @@
       ctx.fill();
 
       const s = ensureGL();
-      if (s.ok && s.ready) {
+      glReady = !!(s.ok && s.ready);
+      if (glReady) {
         glDraw(sinP, cosP, sinL, cosL);
       } else {
         // WebGL or texture unavailable/late: flat placeholder ocean disc
@@ -880,7 +883,7 @@
     ctx.lineCap = 'round';
 
     if (!phys) drawGraticule(cosP, sinP, cosL, sinL);
-    else if (!(glState && glState.ok && glState.ready)) paintPhysicalFallback();
+    else if (!glReady) paintPhysicalFallback();
 
     const useHit = pointerInside;
     const globalPath = useHit ? null : new Path2D();
@@ -897,7 +900,7 @@
     }
 
     // Painted land for the physical fallback (no WebGL / no texture).
-    if (phys && !(glState && glState.ok && glState.ready)) {
+    if (phys && !glReady) {
       ctx.fillStyle = '#c2bb9f';
       if (useHit) {
         for (let k = 0; k < paths.length; k++) {
@@ -1161,6 +1164,8 @@
   }
 
   // ---------- selection ----------
+  const populatedCount = countries.filter((c) => !isAta(c)).length;
+
   function showCard(c) {
     cardName.textContent = c.name;
     if (isAta(c)) {
@@ -1172,7 +1177,7 @@
       cardPop.textContent = nf.format(c.pop);
       cardSub.textContent = shortPop(c.pop) + ' people';
       statShare.textContent = shareText(c.pop).replace(' of the world', '');
-      statRank.textContent = '#' + (c.id + 1) + ' of ' + (countries.length - 1);
+      statRank.textContent = '#' + (c.id + 1) + ' of ' + populatedCount;
     }
     statRegion.textContent = c.continent || '—';
     // capital line: name + city-proper population (digital capital dataset)
@@ -1329,10 +1334,18 @@
     try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
     lastInteract = performance.now();
     if (moved < 6) {
+      if (!hitReady) {
+        pointerInside = true;
+        draw();
+      }
       const id = pick(e.clientX, e.clientY);
       applyHover(id);
       select(id);
       vlon = vlat = 0;
+    }
+    if (e.pointerType === 'touch') {
+      pointerInside = false;
+      applyHover(-1);
     }
     needs = true;
   }
@@ -1352,7 +1365,9 @@
 
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const f = Math.exp(-e.deltaY * 0.0013);
+    const dy = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaMode === 2 ? e.deltaY * 240 : e.deltaY;
+    if (!dy) return;
+    const f = Math.exp(-dy * 0.0013);
     zoom = clamp(zoom * f, 1, 4);
     lastInteract = performance.now();
     needs = true;
@@ -1371,8 +1386,14 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === 'Escape') select(-1);
-    else if (e.key === 'r' || e.key === 'R') resetView();
+    if (e.key === 'Escape') {
+      select(-1);
+      // when embedded (the Solar System app focuses this iframe on open), tell
+      // the parent page to close the overlay too
+      if (parent !== window) {
+        try { parent.postMessage('globe-escape', '*'); } catch (_) {}
+      }
+    } else if (e.key === 'r' || e.key === 'R') resetView();
     else if (e.key === 'p' || e.key === 'P') setMode(mode === 'digital' ? 'physical' : 'digital');
   });
 

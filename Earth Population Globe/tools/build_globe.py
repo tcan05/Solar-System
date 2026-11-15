@@ -120,8 +120,6 @@ def clean_ring(ring):
     out = []
     for lon, lat in ring:
         p = (round(lon, COORD_DECIMALS), round(lat, COORD_DECIMALS))
-        if p == (round(-180.0), round(-180.0)):
-            continue
         if not out or out[-1] != p:
             out.append(p)
     # remove duplicate closing point: rings are treated as closed loops
