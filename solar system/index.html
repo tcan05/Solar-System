@@ -7,7 +7,6 @@
 <style>
   :root {
     --green: #3ee08a;
-    --green-dim: #35a86b;
     --muted: #6f9b82;
   }
   * { box-sizing: border-box; }
@@ -29,6 +28,7 @@
     display: block;
     cursor: grab;
     touch-action: none;
+    outline: none;
   }
   /* soft vignette only — planets read as natural-coloured bodies, not neon */
   #vignette {
@@ -133,58 +133,35 @@
     text-decoration: none;
     color: #ffc44d;
   }
-  #tiltMode { color: #9fdcb7; }
-  #back {
+  /* shared look of every action button */
+  #back, #openGlobe, #viewMoons, #moonViewBtn, #moonExit {
     position: fixed;
+    z-index: 6;
+    padding: 8px 14px;
+    background: rgba(4, 16, 9, 0.88);
+    color: var(--green);
+    border: 1px solid rgba(62, 224, 138, 0.45);
+    border-radius: 8px;
+    font: 12.5px/1 system-ui, sans-serif;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+  }
+  #back:hover, #openGlobe:hover, #viewMoons:hover, #moonViewBtn:hover, #moonExit:hover {
+    background: rgba(24, 64, 38, 0.9);
+  }
+  #back {
     /* stacked directly above the globe's Digital/Physical switch (bottom-left);
        matches its clamp() offsets and 42px pill height + breathing room */
     left: clamp(16px, 2.6vw, 30px);
     bottom: calc(clamp(46px, 6.6vw, 70px) + 42px);
     z-index: 30;
-    padding: 8px 14px;
-    background: rgba(4, 16, 9, 0.88);
-    color: var(--green);
-    border: 1px solid rgba(62, 224, 138, 0.45);
-    border-radius: 8px;
-    font: 12.5px/1 system-ui, sans-serif;
-    letter-spacing: 0.06em;
-    cursor: pointer;
   }
-  #back:hover { background: rgba(24, 64, 38, 0.9); }
-  #openGlobe {
-    position: fixed;
-    left: 15px;
-    bottom: 160px;     /* top of the bottom-left action stack */
-    z-index: 6;
-    padding: 8px 14px;
-    background: rgba(4, 16, 9, 0.88);
-    color: var(--green);
-    border: 1px solid rgba(62, 224, 138, 0.45);
-    border-radius: 8px;
-    font: 12.5px/1 system-ui, sans-serif;
-    letter-spacing: 0.06em;
-    cursor: pointer;
-  }
-  #openGlobe:hover { background: rgba(24, 64, 38, 0.9); }
   /* Bottom-left action stack. The hint block owns the very bottom edge; the
      buttons stack upwards from it so they never overlap each other. */
-  #viewMoons, #moonViewBtn, #moonExit {
-    position: fixed;
-    left: 15px;
-    z-index: 6;
-    padding: 8px 14px;
-    background: rgba(4, 16, 9, 0.88);
-    color: var(--green);
-    border: 1px solid rgba(62, 224, 138, 0.45);
-    border-radius: 8px;
-    font: 12.5px/1 system-ui, sans-serif;
-    letter-spacing: 0.06em;
-    cursor: pointer;
-  }
-  #viewMoons { bottom: 76px; }
+  #openGlobe, #viewMoons, #moonViewBtn, #moonExit { left: 15px; }
+  #openGlobe { bottom: 160px; }
   #moonViewBtn { bottom: 118px; }
-  #moonExit { bottom: 76px; }
-  #viewMoons:hover, #moonViewBtn:hover, #moonExit:hover { background: rgba(24, 64, 38, 0.9); }
+  #viewMoons, #moonExit { bottom: 76px; }
 
   /* ---- top-right inset: the moons of the focused planet ---- */
   #moonPanel {
@@ -243,7 +220,7 @@
     color: #9fdcb7;
   }
   #mpStage .mp-view {
-    height: clamp(84px, 15vh, 132px);   /* the WebGL inset fills this rect */
+    height: clamp(68px, 15vh, 132px);   /* the WebGL inset fills this rect */
   }
   #earthView {
     position: fixed;
@@ -279,7 +256,7 @@
 <div id="title">Solar System<small>eight planets · inclined orbits · rings · moons</small></div>
 <div id="hint">Drag to rotate · Scroll to zoom · Click a planet to focus<br>
 Click a planet, then <s>View the moons</s> (top-right) · <s>Earth</s> also has <s>View from the Moon</s><br>
-Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · <s>I</s> exaggerates</div>
+Faint ring = ecliptic plane · orbital tilts are shown at true scale</div>
 <button id="back" hidden>&larr; Back to Earth</button>
 <button id="openGlobe" hidden>Open population globe</button>
 <button id="viewMoons" hidden>View the moons</button>
@@ -297,6 +274,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   'use strict';
 
   const canvas = document.getElementById('gl');
+  canvas.tabIndex = -1;
   const glError = document.getElementById('glError');
   const labelLayer = document.getElementById('labels');
   const hoverRing = document.getElementById('hoverRing');
@@ -376,11 +354,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   // One real day of spin mapped to this many seconds of screen time (the
   // orbital clock is compressed too; this keeps rotations watchable).
   const SPIN_DAY_SECONDS = 12;
-  // Display gain for orbital inclinations. 1 = true scale. Real planetary
-  // inclinations are only 0.8-7 degrees, so the I key can exaggerate them
-  // (without changing the underlying BODIES values) to make the planes
-  // obvious at a glance.
-  let incGain = 1;
 
   // Ring plane basis: unit axis X along the line of nodes, Y inside the ring
   // plane perpendicular to X. Tilt 0 = flat in the ecliptic; tilt ~1.71 rad ≈ 98°
@@ -463,8 +436,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     const cw = Math.cos(b.peri), sw = Math.sin(b.peri);
     const px = xp * cw - yp * sw;
     const py = xp * sw + yp * cw;
-    const inc = b.inc * incGain;
-    const ci = Math.cos(inc), si = Math.sin(inc);
+    const ci = Math.cos(b.inc), si = Math.sin(b.inc);
     const co = Math.cos(b.node), so = Math.sin(b.node);
     out[0] = px * co - py * ci * so;
     out[1] = py * si;
@@ -679,7 +651,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   let mvEarthR = 1.45;          // Earth's rendered radius in the Moon view
   let mvEarthDist = 3;          // camera-to-Earth distance
   const _mvEye = [0, 0, 0], _mvLook = [0, 0, 0], _mvUp = [0, 0, 0];
-  let _mvLookDist = 3;
 
   // ---------- camera ----------
   const HOME = { pitch: 0.62, dist: 190 };
@@ -721,14 +692,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       -dot3(x, eye), -dot3(y, eye), -dot3(z, eye), 1
     ]);
   }
-  function xfPoint(m, v) {
-    return [
-      m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12] * v[3],
-      m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13] * v[3],
-      m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14] * v[3],
-      m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15] * v[3]
-    ];
-  }
 
   // ---------- camera helpers ----------
   // The camera is stored as a look-at point plus a spherical offset, so an
@@ -749,9 +712,9 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   }
   // a generic camera flight: spherical tween of the look point + angles
   let camTween = null;
-  function startCamTween(toLook, toDist, toYaw, toPitch, dur, done, toFov) {
+  function startCamTween(toLook, toDist, toYaw, toPitch, dur, done, toFov, trackIdx) {
     camTween = {
-      t: 0, dur, done,
+      t: 0, dur, done, trackIdx: trackIdx == null ? -1 : trackIdx,
       from: { look: cam.look.slice(), dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, fov },
       to: { look: toLook.slice(), dist: toDist, yaw: toYaw, pitch: toPitch, fov: toFov == null ? fov : toFov }
     };
@@ -798,12 +761,10 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     let axx = ux * se + hx * ce, axy = uy * se + hy * ce, axz = uz * se + hz * ce;
     const al = Math.hypot(axx, axy, axz) || 1;
     axx /= al; axy /= al; axz /= al;
-    _mvLookDist = dl;
     _mvLook[0] = _mvEye[0] + axx * dl;
     _mvLook[1] = _mvEye[1] + axy * dl;
     _mvLook[2] = _mvEye[2] + axz * dl;
     mvEarthDist = Math.hypot(ex - _mvEye[0], ey - _mvEye[1], ez - _mvEye[2]);
-    return dl;
   }
 
   // ---------- GL ----------
@@ -849,41 +810,13 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       vUv = aCorner;
     }`;
 
+  const HAS_DERIV = !!gl.getExtension('OES_standard_derivatives');
   // Explicit-LOD sampling removes the texture seam: without it the longitude
   // discontinuity at ±π makes the GPU pick the 1×1 mip along that meridian,
   // which showed up as a straight dark line on every textured planet.
-  const TEX_LOD = !!(gl.getExtension('OES_standard_derivatives') &&
-                     gl.getExtension('EXT_shader_texture_lod'));
+  const TEX_LOD = HAS_DERIV && !!gl.getExtension('EXT_shader_texture_lod');
 
-  const PLANET_FS = `
-    ${TEX_LOD ? '#extension GL_OES_standard_derivatives : enable\n#extension GL_EXT_shader_texture_lod : enable\n#define TEX_LOD 1' : ''}
-    precision mediump float;
-    varying vec2 vUv;
-    uniform vec3 uColour;
-    uniform vec3 uColour2;
-    uniform float uBandA;
-    uniform float uBandF;
-    uniform vec3 uSunCam;
-    uniform vec3 uCenterCam;
-    uniform float uRadius;
-    uniform float uPxR;
-    uniform float uSun;
-    uniform float uGlow;
-    // procedural surface styles: 0 rocky/icy moon, 1 Earth, 2 Mars,
-    // 3 Venus haze swirls, 4 banded giant (Jupiter/Saturn/Uranus/Neptune)
-    uniform float uStyle;
-    uniform float uSeed;
-    uniform float uT;
-    uniform float uSpot;   // >0: reddish storm, <0: dark storm, 0: none
-    uniform highp mat4 uView;
-    uniform sampler2D uTex; // photographic equirectangular map (embedded)
-    uniform float uTexOn;   // 1.0 -> sample the map, 0.0 -> procedural styles
-    uniform vec2 uTexSize;  // map dimensions, for correct manual mip selection
-    // Body-fixed frame (world-space X/Y/Z axes). Y is the real spin axis.
-    uniform vec3 uBodyX;
-    uniform vec3 uBodyY;
-    uniform vec3 uBodyZ;
-
+  const NOISE_GLSL = `
     float hash3(vec3 p) {
       p = fract(p * 0.31831 + vec3(0.71, 0.113, 0.419));
       p *= 17.0;
@@ -903,7 +836,36 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       float v = 0.0, a = 0.5;
       for (int i = 0; i < 4; i++) { v += a * noise3(p); p = p * 2.03 + vec3(1.7); a *= 0.5; }
       return v;
-    }
+    }`;
+
+  const PLANET_FS = `
+    ${TEX_LOD ? '#extension GL_OES_standard_derivatives : enable\n#extension GL_EXT_shader_texture_lod : enable\n#define TEX_LOD 1' : ''}
+    precision mediump float;
+    varying vec2 vUv;
+    uniform vec3 uColour;
+    uniform vec3 uColour2;
+    uniform float uBandA;
+    uniform float uBandF;
+    uniform vec3 uSunCam;
+    uniform vec3 uCenterCam;
+    uniform float uRadius;
+    uniform float uPxR;
+    uniform float uSun;
+    uniform float uGlow;
+    // procedural surface styles: 0 rocky/icy moon, 1 Earth, 2 Mars,
+    // 3 Venus haze swirls, 4 banded giant (Jupiter/Saturn/Uranus/Neptune)
+    uniform float uStyle;
+    uniform float uSeed;
+    uniform float uSpot;   // >0: reddish storm, <0: dark storm, 0: none
+    uniform highp mat4 uView;
+    uniform sampler2D uTex; // photographic equirectangular map (embedded)
+    uniform float uTexOn;   // 1.0 -> sample the map, 0.0 -> procedural styles
+    uniform vec2 uTexSize;  // map dimensions, for correct manual mip selection
+    // Body-fixed frame (world-space X/Y/Z axes). Y is the real spin axis.
+    uniform vec3 uBodyX;
+    uniform vec3 uBodyY;
+    uniform vec3 uBodyZ;
+    ${NOISE_GLSL}
     // ridged mountain field for Earth's bump mapping (1 = sharp crest)
     float ridgeH(vec3 p, float co) {
       float r = 1.0 - abs(2.0 * fbm(p * 7.3 + co * 2.2) - 1.0);
@@ -1137,8 +1099,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   // The lunar ground is ray-traced against the Moon's own sphere instead of
   // being a mesh: the horizon is then an exact silhouette of the Moon (no
   // tessellation to give away) and the crater field is sampled in 3D.
-  const HAS_DERIV = !!gl.getExtension('OES_standard_derivatives');
-
   const FULL_VS = `
     attribute vec2 aCorner;
     varying vec2 vNdc;
@@ -1162,27 +1122,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     uniform float uAspect;
     uniform float uR;
     uniform float uSeed;
-
-    float hash3(vec3 p) {
-      p = fract(p * 0.31831 + vec3(0.71, 0.113, 0.419));
-      p *= 17.0;
-      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-    }
-    float noise3(vec3 p) {
-      vec3 i = floor(p), f = fract(p);
-      f = f * f * (3.0 - 2.0 * f);
-      return mix(
-        mix(mix(hash3(i),                      hash3(i + vec3(1.0, 0.0, 0.0)), f.x),
-            mix(hash3(i + vec3(0.0, 1.0, 0.0)), hash3(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
-        mix(mix(hash3(i + vec3(0.0, 0.0, 1.0)), hash3(i + vec3(1.0, 0.0, 1.0)), f.x),
-            mix(hash3(i + vec3(0.0, 1.0, 1.0)), hash3(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
-        f.z);
-    }
-    float fbm(vec3 p) {
-      float v = 0.0, a = 0.5;
-      for (int i = 0; i < 4; i++) { v += a * noise3(p); p = p * 2.03 + vec3(1.7); a *= 0.5; }
-      return v;
-    }
+    ${NOISE_GLSL}
 
     void main() {
       // rebuild this pixel's view ray
@@ -1246,7 +1186,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     return;
   }
   for (const [tag, prog, names] of [
-    ['body', progBody, ['aCorner', 'uView', 'uProj', 'uCenter', 'uRadius', 'uColour', 'uColour2', 'uBandA', 'uBandF', 'uSunCam', 'uCenterCam', 'uPxR', 'uSun', 'uGlow', 'uStyle', 'uSeed', 'uT', 'uSpot', 'uBodyX', 'uBodyY', 'uBodyZ', 'uTex', 'uTexOn', 'uTexSize']],
+    ['body', progBody, ['aCorner', 'uView', 'uProj', 'uCenter', 'uRadius', 'uColour', 'uColour2', 'uBandA', 'uBandF', 'uSunCam', 'uCenterCam', 'uPxR', 'uSun', 'uGlow', 'uStyle', 'uSeed', 'uSpot', 'uBodyX', 'uBodyY', 'uBodyZ', 'uTex', 'uTexOn', 'uTexSize']],
     ['ring', progRing, ['aPos', 'uView', 'uProj', 'uCol']],
     ['pring', progPring, ['aXzM', 'uView', 'uProj', 'uCenter', 'uAxisX', 'uAxisY', 'uRi', 'uRo', 'uPhiDir', 'uSide', 'uCol']],
     ['star', progStar, ['aDir', 'aDs', 'uViewRot', 'uProj', 'uT', 'uDPR']],
@@ -1305,6 +1245,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     proteus: 'data:image/jpeg;base64,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',
   };
   const TEXRES = {};                       // name -> GL texture once decoded
+  const TEXSIZE = {};                      // name -> [width, height] once decoded
   for (const k in TEXDATA) {
     const im = new Image();
     im.onload = () => {
@@ -1336,7 +1277,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     Miranda: 'miranda', Titania: 'titania', Oberon: 'oberon',
     Triton: 'triton', Proteus: 'proteus'
   };
-  const TEXSIZE = {};                  // name -> [width, height] once decoded
   function makeBuffer(target, data, usage) {
     const buf = gl.createBuffer();
     gl.bindBuffer(target, buf);
@@ -1350,9 +1290,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   // anomaly. Drawn as a LINE_LOOP below.
   const ORBIT_PTS = 360;
   const orbitVerts = new Float32Array((BODIES.length - 1) * ORBIT_PTS * 3);
-  const orbitBuf = makeBuffer(gl.ARRAY_BUFFER, orbitVerts);
-  // Refilled when the inclination display gain changes (see the I key).
-  function rebuildOrbits() {
+  {
     const p = [0, 0, 0];
     let o = 0;
     for (let bi = 1; bi < BODIES.length; bi++) {
@@ -1362,10 +1300,8 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
         orbitVerts[o++] = p[0]; orbitVerts[o++] = p[1]; orbitVerts[o++] = p[2];
       }
     }
-    gl.bindBuffer(gl.ARRAY_BUFFER, orbitBuf);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, orbitVerts);
   }
-  rebuildOrbits();
+  const orbitBuf = makeBuffer(gl.ARRAY_BUFFER, orbitVerts);
 
   // Faint polar frame in the ecliptic plane. The real orbital inclinations are
   // small (0.8-7 degrees), so without a reference plane the orbits read as
@@ -1440,7 +1376,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     if (Math.abs(f - fov) < 1e-6) return;
     fov = f;
     RADF = 1 / Math.tan(fov / 2);
-    if (cssW) proj = persp(fov, cssW / cssH, 0.2, 20000);
+    if (cssW > 0 && cssH > 0) proj = persp(fov, cssW / cssH, 0.2, 20000);
   }
   // adaptive resolution: if a large share of frames miss vsync for a sustained
   // window, step the backing-store DPR down (rarely, and only downward)
@@ -1452,7 +1388,8 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     gl.viewport(0, 0, canvas.width, canvas.height);
-    proj = persp(fov, cssW / cssH, 0.2, 20000);
+    const aspect = cssW > 0 && cssH > 0 ? cssW / cssH : 1;
+    proj = persp(fov, aspect, 0.2, 20000);
   }
   window.addEventListener('resize', resize);
   resize();
@@ -1653,8 +1590,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     // real inclination to the ecliptic (shown so the small angles are explicit)
     const incDeg = BODIES[i].orbit ? BODIES[i].inc * 180 / Math.PI : 0;
     const incTxt = i > 0
-      ? ' · orbit tilt ' + (incDeg < 0.05 ? '~0°' : incDeg.toFixed(1) + '°') +
-        (incGain > 1 ? ' (×' + incGain + ' view)' : '')
+      ? ' · orbit tilt ' + (incDeg < 0.05 ? '~0°' : incDeg.toFixed(1) + '°')
       : '';
     tipSub.textContent = BODIES[i].size + (ml ? ' · ' + ml : '') + incTxt;
     const w = tip.offsetWidth, h = tip.offsetHeight;
@@ -1662,6 +1598,35 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     tip.style.top = Math.min(Math.max(6, y + 16), cssH - h - 6) + 'px';
   }
   function hideTip() { tip.style.display = 'none'; }
+
+  // Per-body surface uniforms shared by the main render loop and the moons
+  // inset: colours/bands, procedural style + stable noise seed, body-fixed
+  // frame (real axial tilt + current spin) and the photographic map. While a
+  // map is still decoding (and for Nereid, which has none) the shader falls
+  // back to its procedural surface.
+  function setBodySurface(b, i, isPlanet) {
+    gl.uniform3f(loc.body.uni.uColour, b.col[0], b.col[1], b.col[2]);
+    const band = isPlanet ? b.band : null;
+    gl.uniform3f(loc.body.uni.uColour2,
+      band ? band.c[0] : 0, band ? band.c[1] : 0, band ? band.c[2] : 0);
+    gl.uniform1f(loc.body.uni.uBandA, band ? band.a : 0);
+    gl.uniform1f(loc.body.uni.uBandF, band ? band.f : 0);
+    gl.uniform1f(loc.body.uni.uStyle, isPlanet ? (b.stl || 0) : 0);
+    gl.uniform1f(loc.body.uni.uSeed, 1.7 + (i * 7.37) % 40);
+    gl.uniform1f(loc.body.uni.uSpot, isPlanet ? (b.spot || 0) : 0);
+    gl.uniform3f(loc.body.uni.uBodyX, b.bx[0], b.bx[1], b.bx[2]);
+    gl.uniform3f(loc.body.uni.uBodyY, b.by[0], b.by[1], b.by[2]);
+    gl.uniform3f(loc.body.uni.uBodyZ, b.bz[0], b.bz[1], b.bz[2]);
+    const tex = TEXNAME[b.name] ? TEXRES[TEXNAME[b.name]] : null;
+    const ts = (tex && TEXSIZE[TEXNAME[b.name]]) || [2048, 1024];
+    gl.uniform2f(loc.body.uni.uTexSize, ts[0], ts[1]);
+    gl.uniform1f(loc.body.uni.uTexOn, tex ? 1 : 0);
+    if (tex) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.uniform1i(loc.body.uni.uTex, 0);
+    }
+  }
 
   // ---------- top-right inset: one window per moon ----------
   // Clicking "View the moons" opens a stack of small WebGL viewports in the
@@ -1749,33 +1714,9 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     }
     gl.uniform1f(loc.body.uni.uRadius, radius);
     gl.uniform1f(loc.body.uni.uPxR, pxR);
-    gl.uniform3f(loc.body.uni.uColour, b.col[0], b.col[1], b.col[2]);
-    const band = isPlanet ? b.band : null;
-    gl.uniform3f(loc.body.uni.uColour2,
-      band ? band.c[0] : 0, band ? band.c[1] : 0, band ? band.c[2] : 0);
-    gl.uniform1f(loc.body.uni.uBandA, band ? band.a : 0);
-    gl.uniform1f(loc.body.uni.uBandF, band ? band.f : 0);
     gl.uniform1f(loc.body.uni.uSun, 0);
     gl.uniform1f(loc.body.uni.uGlow, 0);
-    gl.uniform1f(loc.body.uni.uStyle, isPlanet ? (b.stl || 0) : 0);
-    gl.uniform1f(loc.body.uni.uSeed, 1.7 + (i * 7.37) % 40);
-    gl.uniform1f(loc.body.uni.uT, performance.now() / 1000);
-    gl.uniform1f(loc.body.uni.uSpot, isPlanet ? (b.spot || 0) : 0);
-    gl.uniform3f(loc.body.uni.uBodyX, b.bx[0], b.bx[1], b.bx[2]);
-    gl.uniform3f(loc.body.uni.uBodyY, b.by[0], b.by[1], b.by[2]);
-    gl.uniform3f(loc.body.uni.uBodyZ, b.bz[0], b.bz[1], b.bz[2]);
-    // photographic map for planets and for every map-bearing moon; the
-    // procedural path stays as the live fallback while a map is decodating
-    // (and for Nereid, which has no usable map at all)
-    const tex = TEXNAME[b.name] ? TEXRES[TEXNAME[b.name]] : null;
-    const ts = (tex && TEXSIZE[TEXNAME[b.name]]) || [2048, 1024];
-    gl.uniform2f(loc.body.uni.uTexSize, ts[0], ts[1]);
-    gl.uniform1f(loc.body.uni.uTexOn, tex ? 1 : 0);
-    if (tex) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.uniform1i(loc.body.uni.uTex, 0);
-    }
+    setBodySurface(b, i, isPlanet);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -1788,7 +1729,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     for (const c of mpCards) maxR = Math.max(maxR, MOONS[c.k].r);
 
     for (const c of mpCards) {
-      if (c.w < 20 || !c.proj) continue;
+      if (c.w < 20 || c.h < 20 || !c.proj) continue;
       const m = MOONS[c.k];
       const bi = BODIES.length + c.k;
       const mx = _pos[bi * 3], my = _pos[bi * 3 + 1], mz = _pos[bi * 3 + 2];
@@ -1873,12 +1814,13 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     if (mode !== 'moonview') return;
     const eb = BODIES[EARTH];
     bodyPos(EARTH, _orbitTmp);
+    const toPitch = Math.max(-1.35, Math.min(1.35, cam.pitch));
     startCamTween([_orbitTmp[0], _orbitTmp[1], _orbitTmp[2]], eb.r * 7,
-      cam.yaw, cam.pitch, 1.2, () => {
+      cam.yaw, toPitch, 1.2, () => {
         mode = 'focus';
         focusIdx = EARTH;
         labelLayer.classList.remove('faded');
-      }, FOV_DEFAULT);
+      }, FOV_DEFAULT, EARTH);
     mode = 'flyout';
   }
   function updateButtons() {
@@ -1901,9 +1843,9 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     capFrom = { look: cam.look.slice(), dist: cam.dist, pitch: cam.pitch };
     capT = 0;
     mode = 'capture';
-    hover = -1;
-    hideTip();
+    clearHover();
     labelLayer.classList.add('faded');
+    closeMoonsPanel();
   }
   function showEarth() {
     mode = 'earth';
@@ -1915,13 +1857,12 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     // and P (physical/digital) keys work before any mouse interaction
     setTimeout(() => { if (mode === 'earth') earthFrame.focus(); }, 0);
   }
-  function tweenBack(withOverlay) {
-    if (withOverlay) {
-      earthView.classList.remove('on');
-      backBtn.hidden = true;
-      document.body.focus();   // keys reach the solar app again right away
-      setTimeout(() => { if (mode === 'release') earthView.style.display = 'none'; }, 500);
-    }
+  function startRelease() {
+    earthView.classList.remove('on');
+    backBtn.hidden = true;
+    earthFrame.blur();
+    canvas.focus({ preventScroll: true });   // keys reach the solar app again right away
+    setTimeout(() => { if (mode === 'release') earthView.style.display = 'none'; }, 500);
     relFrom = { look: cam.look.slice(), dist: cam.dist, pitch: cam.pitch };
     relT = 0;
     mode = 'release';
@@ -1929,28 +1870,13 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     hover = -1;         // not the whole-solar-system overview
     labelLayer.classList.remove('faded');
   }
-  function startRelease() { tweenBack(true); }
   backBtn.addEventListener('click', startRelease);
-
-  // Orbital-tilt display mode: true scale by default, with an optional
-  // exaggerated view so the (genuinely small) inclination differences read.
-  const tiltModeEl = document.getElementById('tiltMode');
-  function updateTiltMode() {
-    tiltModeEl.textContent = incGain === 1 ? 'real' : '×' + incGain + ' (stylized)';
-  }
-  updateTiltMode();
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (mode === 'earth') startRelease();
       else if (mode === 'moonview') exitMoonView();
       else if (mode === 'focus') defocus();
-    } else if ((e.key === 'i' || e.key === 'I') && mode !== 'earth') {
-      incGain = incGain === 1 ? 4 : 1;
-      rebuildOrbits();
-      updateTiltMode();
-      hideTip();
-      hover = -1;
     }
   });
   window.addEventListener('message', (e) => {
@@ -1970,13 +1896,35 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     homeT = 0;
     mode = 'flyhome';
     focusIdx = -1;
-    hover = -1;
-    hideTip();
+    clearHover();
+    if (mpOn) closeMoonsPanel();
   }
 
   // ---------- input ----------
   let downX = 0, downY = 0, downT = 0, dragging = false, pressed = false;
+  function clearHover() {
+    hover = -1;
+    hideTip();
+    canvas.style.cursor = 'grab';
+  }
+  function endPointer(e, cancelled) {
+    if (!pressed) return;
+    pressed = false;
+    const wasDragging = dragging;
+    dragging = false;
+    canvas.style.cursor = 'grab';
+    if (e) {
+      try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (!cancelled && !wasDragging && e && performance.now() - downT < 500 &&
+        (mode === 'system' || mode === 'focus')) {
+      const idx = hitTest(e.clientX, e.clientY);
+      if (idx >= 0) bodyClick(idx);
+      else if (mode === 'focus') defocus();
+    }
+  }
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (mode === 'capture' || mode === 'earth' || mode === 'release' ||
         mode === 'flyhome' || mode === 'moonview' || mode === 'flyout') return;
     pressed = true; dragging = false;
@@ -1985,7 +1933,10 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   });
   canvas.addEventListener('pointermove', (e) => {
     if (pressed) {
-      if (Math.hypot(e.clientX - downX, e.clientY - downY) > 4) dragging = true;
+      if (!dragging && Math.hypot(e.clientX - downX, e.clientY - downY) > 4) {
+        dragging = true;
+        clearHover();
+      }
       if (dragging) {
         cam.yaw -= (e.clientX - downX) * 0.0052;
         cam.pitch += (e.clientY - downY) * 0.0045;
@@ -1999,24 +1950,25 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       if (h >= 0) showTip(e.clientX, e.clientY, h);
     }
   });
-  canvas.addEventListener('pointerup', (e) => {
-    if (!pressed) return;
-    pressed = false;
-    try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (!dragging && performance.now() - downT < 500 && (mode === 'system' || mode === 'focus')) {
-      const idx = hitTest(e.clientX, e.clientY);
-      if (idx >= 0) bodyClick(idx);
-      else if (mode === 'focus') defocus();
-    }
+  canvas.addEventListener('pointerup', (e) => endPointer(e, false));
+  canvas.addEventListener('pointercancel', (e) => endPointer(e, true));
+  canvas.addEventListener('pointerleave', () => {
+    if (!pressed) clearHover();
+  });
+  window.addEventListener('blur', () => {
+    endPointer(null, true);
+    clearHover();
   });
   canvas.addEventListener('wheel', (e) => {
     if (mode !== 'system' && mode !== 'focus') return;
     e.preventDefault();
-    const zooming = e.deltaY > 0;
+    const dy = e.deltaMode === 1 ? e.deltaY * 24 : e.deltaMode === 2 ? e.deltaY * 240 : e.deltaY;
+    if (!dy) return;
+    const zooming = dy > 0;
     const buf = focusIdx > 0 ? BODIES[focusIdx] : null;
     const minD = buf ? buf.r * 3.8 : 26;   // stay outside the outermost moon orbit
     const maxD = buf ? 220 : 520;
-    cam.dist *= Math.exp((zooming ? 1 : -1) * 0.0012 * Math.abs(e.deltaY));
+    cam.dist *= Math.exp((zooming ? 1 : -1) * 0.0012 * Math.abs(dy));
     cam.dist = Math.max(minD, Math.min(maxD, cam.dist));
   }, { passive: false });
 
@@ -2049,6 +2001,12 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     if (camTween) {
       // generic spherical flight (used to leave the Moon view)
       camTween.t += dt;
+      if (camTween.trackIdx >= 0) {
+        bodyPos(camTween.trackIdx, _orbitTmp);
+        camTween.to.look[0] = _orbitTmp[0];
+        camTween.to.look[1] = _orbitTmp[1];
+        camTween.to.look[2] = _orbitTmp[2];
+      }
       const p = ease(Math.min(1, camTween.t / camTween.dur));
       for (let i = 0; i < 3; i++) {
         cam.look[i] = camTween.from.look[i] +
@@ -2148,6 +2106,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
   function byDzDesc(a, b) { return scrDz[b] - scrDz[a]; }
 
   function render(t) {
+    if (canvas.width <= 0 || canvas.height <= 0) return;
     const view = viewOf(cameraEye(), cam.look);
     fillWorldPos();
     for (let i = 0; i < TOTAL; i++) projectBody(i, view);
@@ -2166,9 +2125,7 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE);
     gl.bindBuffer(gl.ARRAY_BUFFER, starBuf);
-    gl.enableVertexAttribArray(loc.star.attr.aDir);
     gl.vertexAttribPointer(loc.star.attr.aDir, 3, gl.FLOAT, false, 20, 0);
-    gl.enableVertexAttribArray(loc.star.attr.aDs);
     gl.vertexAttribPointer(loc.star.attr.aDs, 2, gl.FLOAT, false, 20, 12);
     gl.drawArrays(gl.POINTS, 0, NSTARS);
 
@@ -2178,14 +2135,12 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
     gl.uniformMatrix4fv(loc.ring.uni.uProj, false, proj);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.bindBuffer(gl.ARRAY_BUFFER, gridRingBuf);
-    gl.enableVertexAttribArray(loc.ring.attr.aPos);
     gl.vertexAttribPointer(loc.ring.attr.aPos, 3, gl.FLOAT, false, 0, 0);
     gl.uniform4f(loc.ring.uni.uCol, 0.40, 0.62, 0.54, 0.09);
     gl.drawArrays(gl.LINE_LOOP, 0, GRID_SEGS);
 
     // orbit paths (true ellipses)
     gl.bindBuffer(gl.ARRAY_BUFFER, orbitBuf);
-    gl.enableVertexAttribArray(loc.ring.attr.aPos);
     gl.vertexAttribPointer(loc.ring.attr.aPos, 3, gl.FLOAT, false, 0, 0);
     let orbitOff = 0;
     for (let i = 1; i < BODIES.length; i++) {
@@ -2218,7 +2173,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       if (moonHot) {
         gl.bindBuffer(gl.ARRAY_BUFFER, moonOrbBuf);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, moonOrbVerts);
-        gl.enableVertexAttribArray(loc.ring.attr.aPos);
         gl.vertexAttribPointer(loc.ring.attr.aPos, 3, gl.FLOAT, false, 0, 0);
         for (let k = 0; k < MOONS.length; k++) {
           if (MOONS[k].parent !== focusIdx) continue;
@@ -2283,36 +2237,9 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       gl.uniform3f(loc.body.uni.uCenterCam, cx, cy, cz);
       gl.uniform1f(loc.body.uni.uRadius, radius);
       gl.uniform1f(loc.body.uni.uPxR, Math.min(scrRpx[i] * (radius / b.r), cssH));
-      gl.uniform3f(loc.body.uni.uColour, b.col[0], b.col[1], b.col[2]);
-      const band = isPlanet ? b.band : null;
-      gl.uniform3f(loc.body.uni.uColour2,
-        band ? band.c[0] : 0, band ? band.c[1] : 0, band ? band.c[2] : 0);
-      gl.uniform1f(loc.body.uni.uBandA, band ? band.a : 0);
-      gl.uniform1f(loc.body.uni.uBandF, band ? band.f : 0);
       gl.uniform1f(loc.body.uni.uSun, isPlanet && b.sun ? 1 : 0);
       gl.uniform1f(loc.body.uni.uGlow, 0);
-      // procedural surface style + a stable per-body noise seed
-      const stl = isPlanet ? (b.stl || 0) : 0;
-      gl.uniform1f(loc.body.uni.uStyle, stl);
-      gl.uniform1f(loc.body.uni.uSeed, 1.7 + (i * 7.37) % 40);
-      gl.uniform1f(loc.body.uni.uT, t / 1000);
-      gl.uniform1f(loc.body.uni.uSpot, isPlanet ? (b.spot || 0) : 0);
-      // body-fixed frame: real axial tilt + current spin, used for the map and
-      // for the procedural surfaces so bands/continents stay glued to the body
-      gl.uniform3f(loc.body.uni.uBodyX, b.bx[0], b.bx[1], b.bx[2]);
-      gl.uniform3f(loc.body.uni.uBodyY, b.by[0], b.by[1], b.by[2]);
-      gl.uniform3f(loc.body.uni.uBodyZ, b.bz[0], b.bz[1], b.bz[2]);
-      // photographic map for planets and for every map-bearing moon;
-      // unbound while the map hasn't finished decoding yet -> procedural
-      const tex = TEXNAME[b.name] ? TEXRES[TEXNAME[b.name]] : null;
-      const ts = (tex && TEXSIZE[TEXNAME[b.name]]) || [2048, 1024];
-      gl.uniform2f(loc.body.uni.uTexSize, ts[0], ts[1]);
-      gl.uniform1f(loc.body.uni.uTexOn, tex ? 1 : 0);
-      if (tex) {
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        gl.uniform1i(loc.body.uni.uTex, 0);
-      }
+      setBodySurface(b, i, isPlanet);
       if (isPlanet && b.sun) { gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); continue; }
       if (isPlanet && b.ring) { drawRingHalf(view, i, 1); bindBodyGeom(); }
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -2331,7 +2258,6 @@ Faint ring = ecliptic plane · orbital tilt: <span id="tiltMode">real</span> · 
       const fx = -view[2], fy = -view[6], fz = -view[10];
       gl.useProgram(progGround);
       gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
-      gl.enableVertexAttribArray(loc.ground.attr.aCorner);
       gl.vertexAttribPointer(loc.ground.attr.aCorner, 2, gl.FLOAT, false, 0, 0);
       gl.uniform3f(loc.ground.uni.uEye, eye[0], eye[1], eye[2]);
       gl.uniform3f(loc.ground.uni.uRight, rx, ry, rz);

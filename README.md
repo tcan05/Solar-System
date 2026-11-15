@@ -34,7 +34,6 @@ Double-click `index.html`, or open it in any modern browser.
 | **Open population globe** | Zoom into the embedded Earth Population Globe |
 | `← Back to Earth` / `Esc` inside the globe | Close it → Earth's orbit view |
 | `Esc` in orbit view | Smoothly back to the whole-system overview |
-| `I` | Toggle real inclinations ↔ ×4 exaggeration |
 | `R` / `P` inside the globe | Reset camera / switch physical ↔ digital |
 
 ## Notes
